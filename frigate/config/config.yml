@@ -78,6 +78,13 @@ birdseye:
 # Lab: "box-sim" (go2rtc container) plays looped sample videos.
 # Real box: set BOX_HOST in .env to the box's NetBird tunnel IP; nothing else changes.
 go2rtc:
+  # Frigate's internal go2rtc API (1984) and RTSP restream (8554) have no credentials. Bind them to the
+  # container's own loopback so other containers on the Docker networks cannot use them. Frigate's nginx
+  # (live view) and ffmpeg (camera inputs below) already connect through 127.0.0.1.
+  api:
+    listen: "127.0.0.1:1984"
+  rtsp:
+    listen: "127.0.0.1:8554"
   streams:
     yard_cam:
       - "rtsp://{FRIGATE_BOX_RTSP_USER}:{FRIGATE_BOX_RTSP_PASSWORD}@{FRIGATE_BOX_HOST}:8554/yard_cam"
