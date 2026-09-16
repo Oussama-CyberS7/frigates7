@@ -88,7 +88,11 @@ services:
     image: timescale/timescaledb:2.30.0-pg17@sha256:3113d12b78392c064aa7475caf7a52b447b29ddd4f9bfd23526733fcb03e3459
     container_name: timescaledb
     restart: unless-stopped
+    # No telemetry to Timescale; enough worker processes for the 12 scheduled jobs
+    # (retention + continuous aggregate refresh) to start together after a reboot.
+    command: ["postgres", "-c", "timescaledb.telemetry_level=off", "-c", "max_worker_processes=24"]
     environment:
+      TIMESCALEDB_TELEMETRY: "off"
       POSTGRES_DB: insights
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
