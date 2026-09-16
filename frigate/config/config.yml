@@ -1,0 +1,194 @@
+# AI Box: Frigate 0.18.0 LAB/STAGING config (OVH VPS, CPU only). NOT a production NVR.
+# Template for site boxes: change topic_prefix, cameras, zones and the detector/model block.
+# Keys verified against frigate/config/*.py at tag v0.18.0 (see frigate-upstream/).
+# Secrets are never written here: {FRIGATE_*} placeholders come from .env through docker-compose.yml.
+
+# Tells Frigate the file is already in 0.18 format, so no migration rewrites it on start.
+version: 0.18-0
+
+mqtt:
+  enabled: true
+  host: mosquitto
+  port: 1883
+  # One unique prefix per site. topic_prefix/client_id do NOT support {FRIGATE_*} substitution.
+  topic_prefix: lab-vps
+  client_id: frigate-lab-vps
+  user: "{FRIGATE_MQTT_USER}"
+  password: "{FRIGATE_MQTT_PASSWORD}"
+  qos: 1
+  stats_interval: 60
+
+auth:
+  enabled: true
+  failed_login_rate_limit: "1/second;5/minute;20/hour"
+
+telemetry:
+  version_check: false
+
+ui:
+  timezone: Africa/Casablanca
+
+logger:
+  default: info
+
+# --- Detector: OpenVINO on CPU (no GPU on this VPS; the CPU exposes AVX2) ---
+# Frigate docs: without GPU/Edge TPU, OpenVINO in CPU mode is often more efficient than the
+# "cpu" (TFLite) detector, which is marked "not recommended".
+detectors:
+  ov:
+    type: openvino
+    device: CPU
+
+model:
+  width: 300
+  height: 300
+  input_tensor: nhwc
+  input_pixel_format: bgr
+  path: /openvino-model/ssdlite_mobilenet_v2.xml
+  labelmap_path: /openvino-model/coco_91cl_bkgr.txt
+  # The image rewrites "truck" to "car" in this labelmap (index 8). Restore it so trucks
+  # can be tracked separately.
+  labelmap:
+    8: truck
+
+# --- Privacy / GDPR defaults ---
+ffmpeg:
+  output_args:
+    # 0.18 default is preset-record-generic-audio-aac, which KEEPS audio. This preset adds -an.
+    record: preset-record-generic
+
+audio:
+  enabled: false
+audio_transcription:
+  enabled: false
+
+# Enrichments disabled (see README "Enabling AI features" for requirements).
+# genai is intentionally absent: in 0.18 it is a map of named providers, and leaving it out keeps it off.
+semantic_search:
+  enabled: false
+face_recognition:
+  enabled: false
+lpr:
+  enabled: false
+
+birdseye:
+  enabled: false
+
+# --- Streams from the box ---
+# Lab: "box-sim" (go2rtc container) plays looped sample videos.
+# Real box: set BOX_HOST in .env to the box's NetBird tunnel IP; nothing else changes.
+go2rtc:
+  streams:
+    yard_cam:
+      - "rtsp://{FRIGATE_BOX_RTSP_USER}:{FRIGATE_BOX_RTSP_PASSWORD}@{FRIGATE_BOX_HOST}:8554/yard_cam"
+    warehouse_cam:
+      - "rtsp://{FRIGATE_BOX_RTSP_USER}:{FRIGATE_BOX_RTSP_PASSWORD}@{FRIGATE_BOX_HOST}:8554/warehouse_cam"
+
+# --- Global behaviour (cameras inherit) ---
+detect:
+  # 0.18 defaults detect.enabled to false: must be explicit.
+  enabled: true
+  fps: 5
+
+objects:
+  track:
+    - person
+    - car
+    - truck
+
+review:
+  alerts:
+    labels:
+      - person
+      - car
+      - truck
+  detections:
+    labels:
+      - person
+      - car
+      - truck
+
+# Record ONLY alerts and detections (no continuous or motion recording).
+# Policy maximum is 30 days. The lab uses 7 days: the looped test videos create activity almost
+# non-stop, and 30 days would outgrow the VPS disk.
+record:
+  enabled: true
+  continuous:
+    days: 0
+  motion:
+    days: 0
+  alerts:
+    pre_capture: 5
+    post_capture: 5
+    retain:
+      days: 7
+      mode: motion
+  detections:
+    pre_capture: 5
+    post_capture: 5
+    retain:
+      days: 7
+      mode: motion
+
+snapshots:
+  enabled: true
+  bounding_box: true
+  timestamp: false
+  retain:
+    default: 7
+
+cameras:
+  yard_cam:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/yard_cam
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+            - record
+    detect:
+      width: 768
+      height: 432
+    # No retained snapshot JPEGs on MQTT (the broker would persist them with no expiry).
+    mqtt:
+      enabled: false
+    zones:
+      loading_dock:
+        friendly_name: Loading dock
+        # Relative coordinates (0-1): left part of the yard where vehicles arrive.
+        coordinates: 0,0.1,0.55,0.1,0.55,1,0,1
+        loitering_time: 3
+        inertia: 3
+        objects:
+          - person
+          - car
+          - truck
+    review:
+      # Alerts only inside the loading dock. Everything else becomes a "detection".
+      alerts:
+        required_zones:
+          - loading_dock
+
+  warehouse_cam:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/warehouse_cam
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+            - record
+    detect:
+      width: 1280
+      height: 720
+    mqtt:
+      enabled: false
+    objects:
+      track:
+        - person
+    review:
+      alerts:
+        labels:
+          - person
+      detections:
+        labels:
+          - person

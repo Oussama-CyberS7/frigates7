@@ -1,0 +1,7 @@
+# Installed with pip --require-hashes (supply-chain pinning). Hashes from pypi.org for these exact files.
+paho-mqtt==2.1.0 \
+    --hash=sha256:6db9ba9b34ed5bc6b6e3812718c7e06e2fd7444540df2455d2c51bd58808feee
+psycopg==3.3.5 \
+    --hash=sha256:ce5aa5cdb4f9379f00f487590e5890bfa7df9a164648c969ffa628505e21af4e
+psycopg-binary==3.3.5 \
+    --hash=sha256:cb3b3bffebfe07110730626e76238161124f35ac87b748d663316a28d22f58b0

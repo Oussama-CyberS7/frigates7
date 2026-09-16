@@ -1,0 +1,31 @@
+# --- Secrets (public repo: never commit) ---
+.env
+.env.*
+!.env.example
+CLAUDE.local.md
+*.pem
+*.key
+*.crt
+
+# --- Mosquitto: only mosquitto.conf is tracked; passwd/acl/healthcheck.conf are generated ---
+mosquitto/config/*
+!mosquitto/config/mosquitto.conf
+
+# --- Frigate runtime data: only config.yml is tracked in frigate/config/ ---
+frigate/config/*
+!frigate/config/config.yml
+frigate/storage/
+
+# --- Mosquitto runtime data ---
+mosquitto/data/
+mosquitto/log/
+
+# --- Test media (downloaded by script, not committed) ---
+test-media/*
+!test-media/README.md
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+*.swp
+.DS_Store

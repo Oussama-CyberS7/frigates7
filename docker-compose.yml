@@ -1,0 +1,179 @@
+# AI Box platform: Phase 1 lab stack on the VPS.
+# Exposure policy: only Frigate 8971 (HTTPS, authenticated) and Grafana 3000 are published, and both
+# are bound to 127.0.0.1 (reach them through an SSH tunnel). Docker-published ports bypass UFW,
+# so never add a port without the 127.0.0.1 prefix. Every image is pinned by version and digest.
+name: aibox
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  # --- Edge simulator: stands in for the AI box that serves camera streams -------------------
+  box-sim:
+    image: alexxit/go2rtc:1.9.14@sha256:675c318b23c06fd862a61d262240c9a63436b4050d177ffc68a32710d9e05bae
+    container_name: box-sim
+    restart: unless-stopped
+    environment:
+      BOX_RTSP_USER: ${BOX_RTSP_USER:?set in .env}
+      BOX_RTSP_PASSWORD: ${BOX_RTSP_PASSWORD:?set in .env}
+    volumes:
+      - ./box-sim/go2rtc.yaml:/config/go2rtc.yaml:ro
+      - ./test-media:/media:ro
+    networks: [edge]
+    logging: *logging
+
+  # --- MQTT broker (Docker network only, no published port) ---------------------------------
+  mosquitto:
+    image: eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797
+    container_name: mosquitto
+    restart: unless-stopped
+    volumes:
+      - ./mosquitto/config:/mosquitto/config:ro
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    networks: [mqtt]
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-o", "/mosquitto/config/healthcheck.conf", "-h", "127.0.0.1",
+             "-p", "1883", "-i", "healthcheck", "-t", "healthcheck/ping", "-E", "-W", "5"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    logging: *logging
+
+  # --- Frigate NVR (lab) ----------------------------------------------------------------------
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:0.18.0@sha256:9678a83a76e4730ac7d9ea7428370e32ae656d6b312aaad30d6c69f3fef14d35
+    container_name: frigate
+    restart: unless-stopped
+    stop_grace_period: 30s
+    # shm formula (docs, 0.18): sum over cameras of (w*h*1.5*20 + 270480)/1048576 MB, plus 40 MB for logs.
+    # yard_cam 768x432 = 9.8 MB, warehouse_cam 1280x720 = 26.6 MB, + 40 MB = 76.4 MB -> 128mb with headroom.
+    shm_size: "128mb"
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      box-sim:
+        condition: service_started
+    environment:
+      TZ: ${TZ:-Africa/Casablanca}
+      FRIGATE_MQTT_USER: frigate
+      FRIGATE_MQTT_PASSWORD: ${FRIGATE_MQTT_PASSWORD:?set in .env}
+      FRIGATE_BOX_HOST: ${BOX_HOST:-box-sim}
+      FRIGATE_BOX_RTSP_USER: ${BOX_RTSP_USER:?set in .env}
+      FRIGATE_BOX_RTSP_PASSWORD: ${BOX_RTSP_PASSWORD:?set in .env}
+    volumes:
+      - ./frigate/config:/config
+      - ./frigate/storage:/media/frigate
+      - type: tmpfs
+        target: /tmp/cache
+        tmpfs:
+          size: 1000000000
+    ports:
+      # Authenticated UI/API (HTTPS, self-signed). Loopback only; use the SSH tunnel.
+      # 5000 (unauthenticated), 8554 (RTSP), 8555 (WebRTC) and 1984 (go2rtc) are NOT published.
+      - "127.0.0.1:8971:8971"
+    networks: [edge, mqtt]
+    logging: *logging
+
+  # --- Insights v0: MQTT events -> TimescaleDB -> Grafana ------------------------------------
+  timescaledb:
+    image: timescale/timescaledb:2.30.0-pg17@sha256:3113d12b78392c064aa7475caf7a52b447b29ddd4f9bfd23526733fcb03e3459
+    container_name: timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: insights
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      # Used only by insights/db/init/*.sh on first start (creates the app roles).
+      INSIGHTS_DB_PASSWORD: ${INSIGHTS_DB_PASSWORD:?set in .env}
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:?set in .env}
+      # timescaledb-tune would otherwise size memory for the whole 22 GB host.
+      TS_TUNE_MEMORY: 2GB
+      TS_TUNE_NUM_CPUS: "2"
+    volumes:
+      - timescaledb-data:/var/lib/postgresql/data
+      - ./insights/db/init:/docker-entrypoint-initdb.d:ro
+    networks: [insights]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d insights"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging: *logging
+
+  insights-ingest:
+    build: ./insights/ingest
+    image: aibox/insights-ingest:0.1.0
+    container_name: insights-ingest
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+      MQTT_USER: insights
+      MQTT_PASSWORD: ${MQTT_INSIGHTS_PASSWORD:?set in .env}
+      DB_HOST: timescaledb
+      DB_NAME: insights
+      DB_USER: insights_writer
+      DB_PASSWORD: ${INSIGHTS_DB_PASSWORD:?set in .env}
+      LOG_LEVEL: INFO
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [mqtt, insights]
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:13.2.2@sha256:ac461fb352abc50da10a51c7d02462e9c05488f11f53f14b3ad79a8145f638a0
+    container_name: grafana
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Africa/Casablanca}
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana-dashboards/site-overview.json
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:?set in .env}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./insights/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./insights/grafana/dashboards:/var/lib/grafana-dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks: [insights]
+    logging: *logging
+
+# Segmented networks: box-sim only reaches Frigate; the database is not on the MQTT or edge network.
+networks:
+  edge: {}
+  mqtt: {}
+  insights: {}
+
+volumes:
+  timescaledb-data: {}
+  grafana-data: {}

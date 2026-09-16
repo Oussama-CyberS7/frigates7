@@ -1,0 +1,24 @@
+# Mosquitto ACL (acl-file plugin). scripts/bootstrap.sh installs this as mosquitto/config/acl
+# (owner 1883:1883, mode 0600). Anything not granted is denied. '#' never matches $SYS topics.
+# One topic_prefix per site (single level, no '/'): lab-vps now, one prefix per box later.
+
+# Frigate on the lab VPS: publishes and subscribes under its own prefix
+# (its will message goes to lab-vps/available).
+user frigate
+topic readwrite lab-vps/#
+
+# Insights ingest: read-only, all sites, only the topics it stores.
+user insights
+topic read +/events
+topic read +/reviews
+topic read +/tracked_object_update
+topic read +/available
+topic read +/stats
+topic read +/+/status/+
+
+# Human operator (mosquitto_sub for debugging): read-only.
+user operator
+topic read lab-vps/#
+
+# Compose healthcheck: connect + subscribe only, no grants needed.
+user healthcheck

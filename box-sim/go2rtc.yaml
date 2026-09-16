@@ -1,0 +1,30 @@
+# Box simulator: stands in for an AI box / site gateway that serves camera streams.
+# It loops the prepared sample videos (test-media/, no audio) and serves them as RTSP cameras on
+# rtsp://box-sim:8554/<name> inside the Docker network only (no ports are published).
+# With a real box, Frigate reads rtsp://<box-netbird-ip>:8554/<name> instead (Phase 2).
+
+ffmpeg:
+  # go2rtc's default file template is "-re -i {input}", which plays once. This one loops forever,
+  # paces at native speed (-re) and regenerates timestamps at each loop boundary.
+  file_loop: "-re -stream_loop -1 -fflags +genpts -i {input}"
+
+streams:
+  # "#video=copy" with no "#audio" means go2rtc never forwards audio (GDPR: no audio).
+  yard_cam: "ffmpeg:/media/yard_cam.mp4#input=file_loop#video=copy"
+  warehouse_cam: "ffmpeg:/media/warehouse_cam.mp4#input=file_loop#video=copy"
+
+rtsp:
+  listen: ":8554"
+  # Same pattern as a real box: RTSP requires credentials (values come from .env).
+  username: ${BOX_RTSP_USER}
+  password: ${BOX_RTSP_PASSWORD}
+
+api:
+  # go2rtc web API: Docker network only (not published). Never publish it.
+  listen: ":1984"
+
+webrtc:
+  listen: ""
+
+log:
+  level: info
