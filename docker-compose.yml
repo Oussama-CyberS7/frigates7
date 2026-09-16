@@ -50,9 +50,13 @@ services:
     container_name: frigate
     restart: unless-stopped
     stop_grace_period: 30s
-    # shm formula (docs, 0.18): sum over cameras of (w*h*1.5*20 + 270480)/1048576 MB, plus 40 MB for logs.
-    # yard_cam 768x432 = 9.8 MB, warehouse_cam 1280x720 = 26.6 MB, + 40 MB = 76.4 MB -> 128mb with headroom.
-    shm_size: "128mb"
+    # shm sizing: the runtime check in 0.18.0 (frigate/util/services.py) is stricter than the docs formula.
+    #   frame_set_MB = sum over cameras of (w*h*1.5 + 270480)/1048576, plus 2 x 1.6 MB (room for 2 more 720p cameras)
+    #   minimum      = 50 MB (logs + nginx cache) + 20 x frame_set_MB   (Frigate warns below this)
+    #   full buffer  = 50 MB + 50 x frame_set_MB
+    # Lab: 0.7 (768x432) + 1.6 (1280x720) + 3.2 = 5.5 MB -> minimum 160 MB, full buffer 325 MB -> 512mb.
+    # tmpfs memory is only used when written, so the headroom costs nothing on this 22 GB host.
+    shm_size: "512mb"
     depends_on:
       mosquitto:
         condition: service_healthy
