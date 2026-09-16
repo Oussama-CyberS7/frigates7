@@ -50,6 +50,12 @@ services:
     container_name: frigate
     restart: unless-stopped
     stop_grace_period: 30s
+    # Frigate 0.18 runs OpenVINO with PERFORMANCE_HINT=LATENCY and no thread setting, so each inference
+    # spreads over every visible core. Measured 2026-09-16 (2 cameras, ~75 inferences/s):
+    #   no limit: 9.8 ms/inference, container 784% CPU, host 30% idle
+    #   cpuset 0-3: 11.0 ms/inference, container 281% CPU, host 67% idle, skipped fps <= 0.3
+    # Core ids are host-specific: adjust on other machines.
+    cpuset: "0-3"
     # shm sizing: the runtime check in 0.18.0 (frigate/util/services.py) is stricter than the docs formula.
     #   frame_set_MB = sum over cameras of (w*h*1.5 + 270480)/1048576, plus 2 x 1.6 MB (room for 2 more 720p cameras)
     #   minimum      = 50 MB (logs + nginx cache) + 20 x frame_set_MB   (Frigate warns below this)
