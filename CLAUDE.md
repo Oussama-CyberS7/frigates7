@@ -112,3 +112,8 @@ State on 2026-09-16:
   - `mosquitto_passwd -c` refuses existing files.
   - Pass passwords via stdin / `-o` options files only.
 - **UFW `limit 22/tcp`:** it blocks bursts of new SSH connections. Keep ControlMaster on for automation.
+- **OpenVINO CPU cost:** OpenVINO (LATENCY hint) spreads every inference over all visible cores.
+  - Unpinned, Frigate used 7.8 vCPU; with `cpuset: "0-3"`, 2.8 vCPU at +1.2 ms per inference.
+  - Measure CPU with `docker stats`, not Frigate's `cpu_usages`.
+  - 2 test cameras use about 3 vCPU, so central inference for 8-camera sites does not fit this VPS.
+- **Commands:** never put a password literally in a command (auto mode blocks it, and it leaks to history/ps).

@@ -253,8 +253,13 @@ sudo docker compose exec -T timescaledb psql -U postgres -d insights -c \
 
 Measured on 2026-09-16:
 
-- **Detector:** OpenVINO on CPU averages 9-12 ms per inference; both cameras run at 5 fps with 0 skipped frames.
-- **CPU:** Frigate uses about 60-70% of one vCPU.
+- **Detector:** OpenVINO on CPU averages 10-11 ms per inference at about 70-80 inferences/s; both cameras
+  run at 5 fps with at most 0.3 skipped fps.
+- **CPU:** the Frigate container uses about 2.8-3.8 vCPU (`sudo docker stats`), almost all of it in the
+  detector.
+  - Without the `cpuset: "0-3"` pin it used 7.8 vCPU for the same work, because OpenVINO spreads each
+    inference over every visible core.
+  - Frigate's own `cpu_usages` figure is per process and understates the total; trust `docker stats`.
 - **Events:** person and car events, including loading_dock alerts, reach `lab-vps/events` and the database.
 
 ## Frigate lab configuration
@@ -345,6 +350,10 @@ Before streaming client video to this VPS:
 - **Location:** it is hosted in **OVH Beauharnois, Canada**, so this is a cross-border transfer (check with
   your DPO / CNIL / CNDP).
 - **Bandwidth:** plan roughly 0.3-1 Mbps upload per camera, continuously.
+- **VPS capacity:** measured here, 2 busy test cameras at 5 fps already use about 3 vCPU for detection
+  (OpenVINO on this Haswell-class CPU).
+  - 8 real cameras per site would need a GPU host or several VPS.
+  - This is another reason to run detection on the Jetson and send only events.
 
 ## Enabling AI features
 
