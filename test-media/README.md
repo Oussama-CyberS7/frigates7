@@ -19,6 +19,7 @@ sha256 values and prepares the box-sim streams.
 ## Privacy note
 
 The license covers copyright only. The people in these clips are still real data subjects.
+
 - Use the clips for internal software testing only, and don't export clips or snapshots outside the lab.
 - The same retention limits apply as for real footage.
 - Face recognition and LPR stay disabled.
