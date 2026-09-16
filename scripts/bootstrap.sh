@@ -12,9 +12,17 @@ ROOT="$PWD"
 MOSQ_IMG='eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797'
 MQ="$ROOT/mosquitto"
 
+# Ubuntu 26.04 uses uutils coreutils, whose `install -o` rejects numeric ids without a passwd entry,
+# so ownership is set with chown (uid/gid 1883 = mosquitto user inside the image).
+own_1883() {  # own_1883 <mode> <path>...
+  local mode="$1"; shift
+  sudo chown 1883:1883 "$@" && sudo chmod "$mode" "$@"
+}
+
 echo "[1/4] Runtime folders"
 mkdir -p "$ROOT/frigate/storage" "$ROOT/test-media"
-sudo install -d -m 0750 -o 1883 -g 1883 "$MQ/data" "$MQ/log"
+sudo mkdir -p "$MQ/data" "$MQ/log"
+own_1883 0750 "$MQ/data" "$MQ/log"
 
 echo "[2/4] .env (random values for empty keys, existing values kept)"
 if [[ ! -f "$ROOT/.env" ]]; then
@@ -43,9 +51,9 @@ echo "[3/4] Mosquitto password file, ACL, healthcheck options"
 # Private scratch dir owned by the broker uid, so only root and uid 1883 can read the hashes.
 tmp="$(sudo mktemp -d)"
 trap 'sudo rm -rf "$tmp"' EXIT
-sudo chown 1883:1883 "$tmp"
-sudo chmod 0700 "$tmp"
-sudo install -m 0600 -o 1883 -g 1883 /dev/null "$tmp/passwd"
+own_1883 0700 "$tmp"
+sudo touch "$tmp/passwd"
+own_1883 0600 "$tmp/passwd"
 # Mosquitto 2.1: "mosquitto_passwd -c" refuses existing files, so add users to an empty file instead.
 add_user() {  # add_user <mqtt-user> <env-key>; the password goes through stdin only (printf is a builtin)
   local pw
@@ -61,7 +69,8 @@ add_user healthcheck MQTT_HEALTHCHECK_PASSWORD
 write_1883() {  # write_1883 <dest>: stdin -> file owned 1883:1883, mode 0600
   sudo sh -c 'umask 077 && cat > "$1" && chown 1883:1883 "$1"' _ "$1"
 }
-sudo install -m 0600 -o 1883 -g 1883 "$tmp/passwd" "$MQ/config/passwd"
+sudo cp "$tmp/passwd" "$MQ/config/passwd"
+own_1883 0600 "$MQ/config/passwd"
 write_1883 "$MQ/config/acl" < "$MQ/acl.template"
 printf -- '-u healthcheck\n-P %s\n' "$(env_get MQTT_HEALTHCHECK_PASSWORD)" | write_1883 "$MQ/config/healthcheck.conf"
 
